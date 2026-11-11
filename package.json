@@ -1,0 +1,51 @@
+{
+  "name": "dsh-windows-notifications",
+  "version": "1.0.0",
+  "description": "Shows a Windows notification when a turn finishes, an approval waits, or a question needs your answer.",
+  "type": "module",
+  "license": "MIT",
+  "author": "ZJM <zjm960929@outlook.com> (https://github.com/zjm960929)",
+  "homepage": "https://github.com/zjm960929/dsh-windows-notifications#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zjm960929/dsh-windows-notifications.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zjm960929/dsh-windows-notifications/issues"
+  },
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "windows",
+    "notifications",
+    "toast"
+  ],
+  "main": "index.js",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "prepublishOnly": "node --check index.js"
+  }
+}

@@ -1,0 +1,5 @@
+# Windows notifications — a host-only bundle.
+# Adds one row; it overrides nothing shipped by DSH.
+- insert:
+    - id: windows-notifications
+      name: dsh-windows-notifications

@@ -1,0 +1,5 @@
+# publish from CI on Linux with LF; avoid CRLF churn on Windows checkouts
+* text=auto eol=lf
+*.png binary
+*.jpg binary
+*.ico binary

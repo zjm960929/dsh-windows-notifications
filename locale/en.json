@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Windows notifications",
+    "description": "Shows a Windows notification when a turn finishes, an approval is waiting, or a question needs your answer."
+  }
+}
