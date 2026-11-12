@@ -125,9 +125,6 @@ export function apply(ctx, config) {
  * @param {WindowsNotifier} notifier delivery bridge.
  */
 function registerNotificationTool(ctx, notifier) {
-  const tools = ctx.get('tools')
-  if (!tools || typeof tools.register !== 'function') return
-
   const definition = {
     name: 'windows_notification',
     description: 'Show a Windows notification to the user, for a heads-up the automatic end-of-turn notice would not cover.',
@@ -179,8 +176,14 @@ function registerNotificationTool(ctx, notifier) {
     },
   }
 
-  // Register once the tool registry exists; registration is owned by this fiber.
-  ctx.effect(() => tools.register(definition), 'windows-notifications.tool')
+  // `tools` may activate after this plugin (and may be replaced later), so bind
+  // the registration to its availability instead of sampling it once here.
+  // Sampling once silently loses the tool whenever activation order differs.
+  ctx.inject(['tools'], (scoped) => {
+    const tools = scoped.get('tools')
+    if (!tools || typeof tools.register !== 'function') return
+    scoped.effect(() => tools.register(definition), 'windows-notifications.tool')
+  })
 }
 
 class WindowsNotifier {
