@@ -39,6 +39,7 @@
 - **四类可开关的通知** —— 任务完成、等待授权、等待回答、需要登录，在插件详情页各有一个开关。
 - **保存即生效** —— 切换开关会写入 profile 配置并重载插件，不需要重启 DSH。
 - **原生 Windows 通知** —— 真正进入通知中心的 Toast，来源显示为 DeepSeek Harness，可静音。
+- **点击唤起** —— 点击通知会打开 `dsh://open`，把 DSH 窗口带到前台，而不是留在其他应用后面。
 - **不打扰子代理** —— 只对根会话发通知，子代理的每一轮结束不会弹窗。
 - **内容带上下文** —— 完成通知带会话标题和回答开头；出错通知带错误信息。
 - **三条投递通道** —— Windows PowerShell 的 WinRT Toast、Host 可用时的 Electron 通知、以及最后的托盘气泡兜底。
@@ -123,6 +124,7 @@ dsh plugin --profile desktop add ./dsh-windows-notifications-<version>.tgz
 | `previewLength` | `120` | 摘要字符上限（0–400） |
 | `skipWhenFocused` | `false` | DSH 窗口在前台时不提醒；仅 Host 能读到 Electron 窗口时生效 |
 | `silent` | `false` | 静音 |
+| `openOnClick` | `true` | 点击通知打开 `dsh://open`，把 DSH 窗口带到前台 |
 | `fallback` | `true` | 首选通道失败时尝试其余通道 |
 | `transport` | `auto` | `auto` / `electron` / `toast` / `balloon` |
 | `locale` | `auto` | `auto` / `zh` / `en` 通知文案语言 |
@@ -199,7 +201,7 @@ Host 注册了 `windows_notification` 工具，模型可以主动发一条自动
 ### 限制
 
 - 通知是否显示最终由 Windows 决定：请勿打扰、专注助手或关闭该应用通知都会抑制横幅。
-- 点击 Toast 不会把 DSH 窗口切回前台，因为插件没有注册 COM 激活器。
+- 点击通知会通过 `dsh:` 协议把 DSH 窗口带到前台，但不会打开发送通知的那个会话：未注册 COM 激活器的应用，Windows 不会提供点击回调。
 - Host 暴露不出 Electron 窗口时，`skipWhenFocused` 不生效（目前的桌面版就是这种情况）。
 - 托盘气泡的来源由系统归属；显式应用标识被拒绝时，来源仍显示 Windows PowerShell。
 - 插件不汇总多台 Host 或多设备上的会话。

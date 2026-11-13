@@ -39,6 +39,7 @@ It is for people who start long-running sessions and then look away: the notific
 - **Four switchable notification types** — turn finished, approval needed, question waiting, sign-in required; each one is a switch on the plugin page.
 - **Changes apply immediately** — toggling a switch writes the value into the profile configuration and reloads the plugin; no DSH restart.
 - **Native Windows surface** — real toasts in the notification center, attributed to DeepSeek Harness, with sound control.
+- **Click to wake** — clicking a toast opens `dsh://open`, so the DSH window comes forward instead of staying behind other apps.
 - **Quiet about delegation** — only root sessions notify; turns of delegated subagents never interrupt you.
 - **Turn-aware content** — completion notices carry the session title and the start of the answer; failures carry the error message.
 - **Three delivery channels** — a WinRT toast through Windows PowerShell, an Electron notification when the Host exposes it, and a tray balloon as the last resort.
@@ -123,6 +124,7 @@ The four switches map to the first four keys; every key can also be set by hand:
 | `previewLength` | `120` | Preview limit in characters (0–400) |
 | `skipWhenFocused` | `false` | Stay quiet while the DSH window is focused; only works when the Host exposes Electron windows |
 | `silent` | `false` | Do not play the notification sound |
+| `openOnClick` | `true` | Clicking a toast opens `dsh://open` to bring the DSH window forward |
 | `fallback` | `true` | Try the remaining channels when the preferred one fails |
 | `transport` | `auto` | `auto` / `electron` / `toast` / `balloon` |
 | `locale` | `auto` | `auto` / `zh` / `en` notification language |
@@ -199,7 +201,7 @@ The plugin has a Host half and a browser half:
 ### Limitations
 
 - Whether a toast appears is up to Windows: Do Not Disturb, focus assist, or a disabled app entry can suppress it.
-- A clicked toast does not focus the DSH window, because no COM activator is registered.
+- Clicking a toast brings the DSH window forward through the `dsh:` protocol, but it does not open the session that sent the notification: Windows provides no activation callback to an unpackaged app without a registered COM activator.
 - `skipWhenFocused` has no effect when the Host exposes no Electron window, which is the case on DSH Desktop today.
 - The tray-balloon fallback is attributed by the OS; when the explicit app identity is refused, the source still reads Windows PowerShell.
 - The plugin does not aggregate sessions across multiple Hosts or devices.

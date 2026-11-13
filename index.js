@@ -653,6 +653,7 @@ class WindowsNotifier {
       body: singleLine(payload.body),
       appId: this.settings.appUserModelId,
       silent: this.settings.silent,
+      launch: this.settings.openOnClick ? 'dsh://open' : '',
     })
     const result = await runPowerShell(script, 15_000)
     if (result.ok) return { ok: true }
@@ -748,6 +749,7 @@ function resolveSettings(raw) {
     logFile: typeof config.logFile === 'string' ? config.logFile.trim() : '',
     appUserModelId,
     balloonAppUserModelId: flag('balloonAppUserModelId', true),
+    openOnClick: flag('openOnClick', true),
   }
 }
 
@@ -894,13 +896,14 @@ function messageText(message) {
   return parts.join(' ')
 }
 
-function buildToastScript({ title, body, appId, silent }) {
+function buildToastScript({ title, body, appId, silent, launch }) {
   const audio = silent ? "$audio = '<audio silent=\"true\" />'" : "$audio = ''"
   return [
     "$ErrorActionPreference = 'Stop'",
     `$title = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${base64(title)}'))`,
     `$body = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${base64(body)}'))`,
     `$appId = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${base64(appId)}'))`,
+    `$launch = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('${base64(launch)}'))`,
     '[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime] | Out-Null',
     '[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom, ContentType=WindowsRuntime] | Out-Null',
     '$first = [System.Security.SecurityElement]::Escape($title)',
@@ -908,7 +911,12 @@ function buildToastScript({ title, body, appId, silent }) {
     "$text = '<text>' + $first + '</text>'",
     "if ($second) { $text = $text + '<text>' + $second + '</text>' }",
     audio,
-    "$xml = '<toast><visual><binding template=\"ToastGeneric\">' + $text + '</binding></visual>' + $audio + '</toast>'",
+    // Protocol activation is the only click path for an unpackaged toast: the
+    // launch URL is opened by the shell, and DSH's `dsh:` handler brings its
+    // window forward. An empty launch keeps the toast inert.
+    '$open = ""',
+    'if ($launch) { $open = \' activationType="protocol" launch="\' + [System.Security.SecurityElement]::Escape($launch) + \'"\' }',
+    "$xml = '<toast' + $open + '><visual><binding template=\"ToastGeneric\">' + $text + '</binding></visual>' + $audio + '</toast>'",
     '$doc = New-Object Windows.Data.Xml.Dom.XmlDocument',
     '$doc.LoadXml($xml)',
     '$toast = New-Object Windows.UI.Notifications.ToastNotification $doc',
