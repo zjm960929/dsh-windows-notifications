@@ -1,6 +1,6 @@
 {
   "name": "dsh-windows-notifications",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "description": "Shows a Windows notification when a turn finishes, an approval waits, or a question needs your answer.",
   "icon": "./icon.svg",
   "type": "module",
@@ -25,15 +25,18 @@
   "main": "index.js",
   "exports": {
     ".": "./index.js",
+    "./client": "./client.js",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
   "files": [
     "index.js",
+    "client.js",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
-    "README.md"
+    "README.md",
+    "README.zh.md"
   ],
   "engines": {
     "node": ">=22"
@@ -41,12 +44,19 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-locale"
+      ]
     }
   },
   "publishConfig": {
     "access": "public"
   },
   "scripts": {
-    "prepublishOnly": "node --check index.js"
+    "prepublishOnly": "node --check index.js && node --check client.js"
   }
 }

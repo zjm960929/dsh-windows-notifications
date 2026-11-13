@@ -31,6 +31,8 @@ const POWERSHELL = process.env.SystemRoot
   ? `${process.env.SystemRoot}\\System32\\WindowsPowerShell\\v1.0\\powershell.exe`
   : 'powershell.exe'
 const TRANSPORTS = ['auto', 'electron', 'toast', 'balloon']
+const SETTINGS_ROUTE = '/windows-notifications/api'
+const FLAG_KEYS = ['turnEnd', 'approval', 'question', 'signIn']
 
 const TEXTS = {
   en: {
@@ -116,6 +118,7 @@ export function apply(ctx, config) {
 
   ctx.effect(() => () => notifier.dispose(), 'windows-notifications.lifecycle')
   registerNotificationTool(ctx, notifier)
+  registerSettingsRoute(ctx, notifier)
 }
 
 /**
@@ -186,6 +189,132 @@ function registerNotificationTool(ctx, notifier) {
   })
 }
 
+/**
+ * Serve the per-type switches to the plugin page. The page is same-origin, so
+ * the route reuses the Host connection admission instead of inventing a token.
+ * @param {object} ctx owning context.
+ * @param {WindowsNotifier} notifier delivery bridge.
+ */
+function registerSettingsRoute(ctx, notifier) {
+  const webServer = ctx.get('webServer')
+  if (!webServer || typeof webServer.register !== 'function') return
+  const connection = ctx.get('connection')
+
+  ctx.effect(() => webServer.register({
+    kind: 'prefix',
+    path: SETTINGS_ROUTE,
+    handler: (req, res) => handleSettingsRequest(ctx, notifier, connection, req, res),
+  }), 'windows-notifications.settings-route')
+}
+
+async function handleSettingsRequest(ctx, notifier, connection, req, res) {
+  if (!connection || typeof connection.admit !== 'function') {
+    sendJson(res, 503, { ok: false, error: 'auth-unavailable' })
+    return
+  }
+  let admission
+  try {
+    admission = connection.admit(req)
+  } catch {
+    sendJson(res, 403, { ok: false, error: 'forbidden' })
+    return
+  }
+  if (!admission || typeof admission !== 'object' || 'rejection' in admission) {
+    sendJson(res, 403, { ok: false, error: 'forbidden' })
+    return
+  }
+  if (admission.peer?.principal?.kind !== 'owner') {
+    sendJson(res, 403, { ok: false, error: 'forbidden' })
+    return
+  }
+
+  const url = new URL(req.url ?? '/', 'http://localhost')
+  const path = url.pathname.startsWith(SETTINGS_ROUTE)
+    ? url.pathname.slice(SETTINGS_ROUTE.length) || '/'
+    : '/'
+  if (path !== '/config') {
+    sendJson(res, 404, { ok: false, error: 'not-found' })
+    return
+  }
+  if (req.method === 'GET') {
+    sendJson(res, 200, { ok: true, config: notifier.configSnapshot() })
+    return
+  }
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { ok: false, error: 'method-not-allowed' })
+    return
+  }
+
+  const body = await readJsonBody(req, 4096)
+  if (!body || typeof body !== 'object') {
+    sendJson(res, 400, { ok: false, error: 'bad-json' })
+    return
+  }
+  const next = {}
+  for (const key of FLAG_KEYS) {
+    if (typeof body[key] === 'boolean') next[key] = body[key]
+  }
+  if (Object.keys(next).length === 0) {
+    sendJson(res, 400, { ok: false, error: 'nothing-to-save' })
+    return
+  }
+
+  const entry = ctx.fiber?.entry
+  const editor = ctx.get('configEditor')
+  if (!entry || !editor || typeof editor.edit !== 'function') {
+    sendJson(res, 503, { ok: false, error: 'config-unavailable' })
+    return
+  }
+  try {
+    await editor.edit(entry, current => ({ ...current, ...next }))
+  } catch (error) {
+    sendJson(res, 500, { ok: false, error: 'save-failed', detail: clean(describeError(error)).slice(0, 200) })
+    return
+  }
+  sendJson(res, 200, { ok: true, config: { ...notifier.configSnapshot(), ...next } })
+}
+
+function sendJson(res, status, body) {
+  try {
+    res.statusCode = status
+    res.setHeader('content-type', 'application/json; charset=utf-8')
+    res.setHeader('cache-control', 'no-store')
+    res.end(JSON.stringify(body))
+  } catch {
+    // The page navigated away or the connection closed.
+  }
+}
+
+function readJsonBody(req, limit) {
+  return new Promise((resolve) => {
+    const chunks = []
+    let size = 0
+    let settled = false
+    const finish = (value) => {
+      if (settled) return
+      settled = true
+      resolve(value)
+    }
+    req.on('data', (chunk) => {
+      size += chunk.length
+      if (size > limit) {
+        finish(null)
+        try { req.destroy() } catch { /* already closed */ }
+        return
+      }
+      chunks.push(chunk)
+    })
+    req.on('end', () => {
+      try {
+        finish(JSON.parse(Buffer.concat(chunks).toString('utf8')))
+      } catch {
+        finish(null)
+      }
+    })
+    req.on('error', () => finish(null))
+  })
+}
+
 class WindowsNotifier {
   constructor(ctx, rawConfig) {
     this.ctx = ctx
@@ -253,6 +382,20 @@ class WindowsNotifier {
       toastAvailable: !this.toastBroken,
       lastError: this.lastError,
       appUserModelId: this.settings.appUserModelId,
+    }
+  }
+
+  /**
+   * The four per-type switches that the plugin page edits.
+   * @returns {{ turnEnd: boolean, approval: boolean, question: boolean, signIn: boolean }} effective flags.
+   */
+  configSnapshot() {
+    const settings = this.settings
+    return {
+      turnEnd: settings.turnEnd,
+      approval: settings.approval,
+      question: settings.question,
+      signIn: settings.signIn,
     }
   }
 
