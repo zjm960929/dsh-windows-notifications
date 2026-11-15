@@ -196,18 +196,23 @@ function registerNotificationTool(ctx, notifier) {
  * @param {WindowsNotifier} notifier delivery bridge.
  */
 function registerSettingsRoute(ctx, notifier) {
-  const webServer = ctx.get('webServer')
-  if (!webServer || typeof webServer.register !== 'function') return
-  const connection = ctx.get('connection')
-
-  ctx.effect(() => webServer.register({
-    kind: 'prefix',
-    path: SETTINGS_ROUTE,
-    handler: (req, res) => handleSettingsRequest(ctx, notifier, connection, req, res),
-  }), 'windows-notifications.settings-route')
+  // `webServer` can activate after this plugin, so bind the route to its
+  // availability instead of sampling it once; a missing sample would silently
+  // leave the settings page without an API.
+  ctx.inject(['webServer'], (scoped) => {
+    const webServer = scoped.get('webServer')
+    if (!webServer || typeof webServer.register !== 'function') return
+    scoped.effect(() => webServer.register({
+      kind: 'prefix',
+      path: SETTINGS_ROUTE,
+      handler: (req, res) => handleSettingsRequest(scoped, ctx, notifier, req, res),
+    }), 'windows-notifications.settings-route')
+    notifier.log('settings route registered')
+  })
 }
 
-async function handleSettingsRequest(ctx, notifier, connection, req, res) {
+async function handleSettingsRequest(services, ownerCtx, notifier, req, res) {
+  const connection = services.get('connection')
   if (!connection || typeof connection.admit !== 'function') {
     sendJson(res, 503, { ok: false, error: 'auth-unavailable' })
     return
@@ -259,8 +264,8 @@ async function handleSettingsRequest(ctx, notifier, connection, req, res) {
     return
   }
 
-  const entry = ctx.fiber?.entry
-  const editor = ctx.get('configEditor')
+  const entry = ownerCtx.fiber?.entry
+  const editor = services.get('configEditor')
   if (!entry || !editor || typeof editor.edit !== 'function') {
     sendJson(res, 503, { ok: false, error: 'config-unavailable' })
     return
