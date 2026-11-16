@@ -36,7 +36,7 @@ const FLAG_KEYS = ['turnEnd', 'approval', 'question', 'signIn', 'updateCheck', '
 const PACKAGE_NAME = 'dsh-windows-notifications'
 const REGISTRY_URL = `https://registry.npmjs.org/${PACKAGE_NAME}`
 const REPEAT_LIMIT = 6
-const REPEAT_HOLD_LIMIT = 24
+const HOLD_WINDOW_MS = 2 * 60 * 60 * 1000
 const ACTIVE_TTL_MS = 20_000
 const PACKAGE_VERSION = (() => {
   try {
@@ -599,30 +599,42 @@ class WindowsNotifier {
     if (!this.settings.repeatReminder || this.disposed) return
     const key = `${payload.kind}|${sessionId ?? ''}|${payload.title}`
     this.clearRepeat(key)
-    const entry = { payload, sessionId, sent: 0, ticks: 0, timer: null }
+    const intervalMs = this.settings.repeatIntervalMinutes * 60_000
+    const maxTicks = Math.max(REPEAT_LIMIT, Math.ceil(HOLD_WINDOW_MS / intervalMs))
+    const entry = { payload, sessionId, sent: 0, ticks: 0, heldLogged: false, timer: null }
     entry.timer = setInterval(() => {
       if (this.disposed) {
         this.clearRepeat(key)
         return
       }
       entry.ticks += 1
-      // A reminder held while focused must not run forever.
-      if (entry.ticks > REPEAT_HOLD_LIMIT) {
+      // A reminder held while focused must not outlive its relevance window.
+      if (entry.ticks > maxTicks) {
         this.clearRepeat(key)
         return
       }
       if (this.isSessionFocused(sessionId)) {
-        this.log(`hold repeat kind=${payload.kind} reason=session-focused`)
+        if (!entry.heldLogged) {
+          entry.heldLogged = true
+          this.log(`hold repeat kind=${payload.kind} reason=session-focused`)
+        }
         return
       }
       entry.sent += 1
       this.log(`repeat kind=${payload.kind} count=${entry.sent}`)
       void this.send({ ...payload }).catch(() => {})
       if (entry.sent >= REPEAT_LIMIT) this.clearRepeat(key)
-    }, this.settings.repeatIntervalMinutes * 60_000)
+    }, intervalMs)
     entry.timer.unref?.()
     this.repeatTimers.set(key, entry)
-    if (until) Promise.resolve(until).finally(() => this.clearRepeat(key)).catch(() => {})
+    if (until) {
+      Promise.resolve(until)
+        .finally(() => {
+          // Only retire this entry: a newer reminder may already own the key.
+          if (this.repeatTimers.get(key) === entry) this.clearRepeat(key)
+        })
+        .catch(() => {})
+    }
   }
 
   clearRepeat(key) {
