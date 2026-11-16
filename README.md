@@ -41,7 +41,7 @@ It is for people who start long-running sessions and then look away: the notific
 - **Native Windows surface** — real toasts in the notification center, attributed to DeepSeek Harness, with sound control.
 - **Click to wake** — clicking a toast opens `dsh://open`, so the DSH window comes forward instead of staying behind other apps.
 - **Update alerts** — checks npm at startup and raises one notification when a newer version exists; a switch on the plugin page turns it off.
-- **Repeat reminders** — approvals, questions and finished turns remind you again on a configurable interval (default 5 minutes, 1–60) until you act, with a bounded repeat count; a focused session stops them.
+- **Repeat reminders** — approvals, questions and finished turns remind you again on a configurable interval (default 5 minutes, 1–60) until you act, with a bounded repeat count; a focused session pauses them and losing focus resumes them.
 - **Quiet about delegation** — only root sessions notify; turns of delegated subagents never interrupt you.
 - **Turn-aware content** — completion notices carry the session title and the start of the answer; failures carry the error message.
 - **Three delivery channels** — a WinRT toast through Windows PowerShell, an Electron notification when the Host exposes it, and a tray balloon as the last resort.
@@ -211,7 +211,7 @@ The plugin has a Host half and a browser half:
 - The tray-balloon fallback is attributed by the OS; when the explicit app identity is refused, the source still reads Windows PowerShell.
 - The plugin does not aggregate sessions across multiple Hosts or devices.
 - Update alerts need access to the npm registry; a failed check is written to the diagnostics log and never shown as a notification.
-- A repeated reminder stops when the approval or question settles, when the session sees new activity, when the page reports that session as focused, or after six repeats.
+- A repeated reminder is held while the session is focused and resumes when focus is lost; it stops when the approval or question settles, when the session sees new activity, when no focus report arrives for 20 seconds, or after six repeats.
 - The internal HTTP route may change between minor releases.
 
 ## Development

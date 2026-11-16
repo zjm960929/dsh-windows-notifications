@@ -36,6 +36,8 @@ const FLAG_KEYS = ['turnEnd', 'approval', 'question', 'signIn', 'updateCheck', '
 const PACKAGE_NAME = 'dsh-windows-notifications'
 const REGISTRY_URL = `https://registry.npmjs.org/${PACKAGE_NAME}`
 const REPEAT_LIMIT = 6
+const REPEAT_HOLD_LIMIT = 24
+const ACTIVE_TTL_MS = 20_000
 const PACKAGE_VERSION = (() => {
   try {
     return String(createRequire(import.meta.url)('./package.json').version || '0.0.0')
@@ -263,7 +265,11 @@ async function handleSettingsRequest(services, ownerCtx, notifier, req, res) {
       sendJson(res, 400, { ok: false, error: 'bad-json' })
       return
     }
-    notifier.markActive(active.sessionId, active.focused === true)
+    notifier.markActive(
+      typeof active.clientId === 'string' && active.clientId ? active.clientId : 'default',
+      active.sessionId,
+      active.focused === true,
+    )
     sendJson(res, 200, { ok: true })
     return
   }
@@ -375,8 +381,7 @@ class WindowsNotifier {
     this.repeatTimers = new Map()
     this.version = PACKAGE_VERSION
     this.lastUpdateNotice = ''
-    this.activeSessionId = ''
-    this.activeFocused = false
+    this.activeReports = new Map()
 
     // Align the process identity with the installed Start-menu shortcut so a
     // Windows toast is attributed to DSH instead of an unknown sender.
@@ -592,25 +597,31 @@ class WindowsNotifier {
    */
   scheduleRepeat(payload, { sessionId, until }) {
     if (!this.settings.repeatReminder || this.disposed) return
-    if (this.activeFocused && sessionId && this.activeSessionId === sessionId) {
-      this.log(`skip repeat kind=${payload.kind} reason=session-focused`)
-      return
-    }
     const key = `${payload.kind}|${sessionId ?? ''}|${payload.title}`
     this.clearRepeat(key)
-    let sent = 0
-    const timer = setInterval(() => {
+    const entry = { payload, sessionId, sent: 0, ticks: 0, timer: null }
+    entry.timer = setInterval(() => {
       if (this.disposed) {
         this.clearRepeat(key)
         return
       }
-      sent += 1
-      this.log(`repeat kind=${payload.kind} count=${sent}`)
+      entry.ticks += 1
+      // A reminder held while focused must not run forever.
+      if (entry.ticks > REPEAT_HOLD_LIMIT) {
+        this.clearRepeat(key)
+        return
+      }
+      if (this.isSessionFocused(sessionId)) {
+        this.log(`hold repeat kind=${payload.kind} reason=session-focused`)
+        return
+      }
+      entry.sent += 1
+      this.log(`repeat kind=${payload.kind} count=${entry.sent}`)
       void this.send({ ...payload }).catch(() => {})
-      if (sent >= REPEAT_LIMIT) this.clearRepeat(key)
+      if (entry.sent >= REPEAT_LIMIT) this.clearRepeat(key)
     }, this.settings.repeatIntervalMinutes * 60_000)
-    timer.unref?.()
-    this.repeatTimers.set(key, { timer, sessionId })
+    entry.timer.unref?.()
+    this.repeatTimers.set(key, entry)
     if (until) Promise.resolve(until).finally(() => this.clearRepeat(key)).catch(() => {})
   }
 
@@ -629,19 +640,46 @@ class WindowsNotifier {
   }
 
   /**
-   * Record which session the browser is showing and whether its window has
-   * focus. A focused session needs no reminders: the user is looking at it.
+   * Record which session one client shows and whether its window has focus.
+   * A report expires, so a closed page stops suppressing reminders, and any
+   * fresh focused report keeps the session quiet even with several clients.
+   * @param {string} clientId page instance identity.
    * @param {string} sessionId active session id reported by the page.
    * @param {boolean} focused whether the page currently has focus.
    */
-  markActive(sessionId, focused) {
+  markActive(clientId, sessionId, focused) {
     if (typeof sessionId !== 'string' || !sessionId) return
-    const nextFocused = focused === true
-    const changed = this.activeSessionId !== sessionId || this.activeFocused !== nextFocused
-    this.activeSessionId = sessionId
-    this.activeFocused = nextFocused
-    if (changed) this.log(`client active session=${sessionId} focused=${nextFocused}`)
-    if (nextFocused) this.clearSessionRepeats(sessionId)
+    const before = this.isSessionFocused(sessionId)
+    this.activeReports.set(clientId || 'default', {
+      sessionId,
+      focused: focused === true,
+      at: Date.now(),
+    })
+    this.pruneActive()
+    const after = this.isSessionFocused(sessionId)
+    if (before !== after) this.log(`session focus ${sessionId} ${after ? 'gained' : 'lost'}`)
+  }
+
+  /**
+   * Whether any fresh client report says this session is focused.
+   * @param {string} sessionId session to test.
+   * @returns {boolean} true while the session is being watched.
+   */
+  isSessionFocused(sessionId) {
+    if (!sessionId) return false
+    this.pruneActive()
+    for (const report of this.activeReports.values()) {
+      if (report.sessionId === sessionId && report.focused) return true
+    }
+    return false
+  }
+
+  /** Drop reports older than the heartbeat window. */
+  pruneActive() {
+    const now = Date.now()
+    for (const [clientId, report] of this.activeReports) {
+      if (now - report.at > ACTIVE_TTL_MS) this.activeReports.delete(clientId)
+    }
   }
 
   async send(payload) {

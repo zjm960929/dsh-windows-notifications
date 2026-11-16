@@ -1,6 +1,6 @@
 {
   "name": "dsh-windows-notifications",
-  "version": "1.3.2",
+  "version": "1.3.3",
   "description": "Shows a Windows notification when a turn finishes, an approval waits, or a question needs your answer.",
   "icon": "./icon.svg",
   "type": "module",

@@ -271,29 +271,57 @@ window.__ModuleLoader__.load({
             return ''
           }
         }
+        const clientId = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
+          ? crypto.randomUUID()
+          : `client-${Date.now()}-${Math.random().toString(16).slice(2)}`
         let lastSignature = ''
+        let lastSentAt = 0
         const reportActive = () => {
           const sessionId = currentSessionId()
           if (!sessionId) return
           const focused = typeof document !== 'undefined' && document.hasFocus()
           const signature = `${sessionId}|${focused ? 1 : 0}`
-          if (signature === lastSignature) return
+          const now = Date.now()
+          // Send on every change, and as a heartbeat well inside the Host TTL.
+          if (signature === lastSignature && now - lastSentAt < 8000) return
           lastSignature = signature
+          lastSentAt = now
           fetch(`${API}/active`, {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ sessionId, focused }),
+            body: JSON.stringify({ clientId, sessionId, focused }),
+          }).catch(() => {})
+        }
+        const reportClosed = () => {
+          const sessionId = currentSessionId()
+          if (!sessionId) return
+          const body = JSON.stringify({ clientId, sessionId, focused: false })
+          try {
+            if (typeof navigator !== 'undefined' && typeof navigator.sendBeacon === 'function') {
+              navigator.sendBeacon(`${API}/active`, new Blob([body], { type: 'application/json' }))
+              return
+            }
+          } catch {
+            // Fall back to a keepalive fetch.
+          }
+          fetch(`${API}/active`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body,
+            keepalive: true,
           }).catch(() => {})
         }
         const reportTimer = setInterval(reportActive, 3000)
         window.addEventListener('focus', reportActive)
         window.addEventListener('blur', reportActive)
         document.addEventListener('visibilitychange', reportActive)
+        window.addEventListener('pagehide', reportClosed)
         ctx.effect(() => () => {
           clearInterval(reportTimer)
           window.removeEventListener('focus', reportActive)
           window.removeEventListener('blur', reportActive)
           document.removeEventListener('visibilitychange', reportActive)
+          window.removeEventListener('pagehide', reportClosed)
         }, 'windows-notifications: active-session reporter')
         reportActive()
       },
