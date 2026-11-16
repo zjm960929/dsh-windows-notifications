@@ -529,8 +529,11 @@ class WindowsNotifier {
     if (detail) body = joinLines(body, detail)
 
     const payload = { kind: `turn:${kind}`, title, body, sessionId: session?.id }
-    if (kind === 'completed') this.emit(payload, { repeat: { sessionId: session?.id } })
-    else this.emit(payload)
+    if (kind === 'completed') {
+      this.emit(payload, { repeat: { sessionId: session?.id, stopOnFocus: true } })
+    } else {
+      this.emit(payload)
+    }
   }
 
   onApproval(request, settled) {
@@ -595,13 +598,26 @@ class WindowsNotifier {
    * @param {{ title: string, body: string, kind: string }} payload notice.
    * @param {{ sessionId?: string, until?: Promise<unknown> }} repeat repeat facts.
    */
-  scheduleRepeat(payload, { sessionId, until }) {
+  scheduleRepeat(payload, { sessionId, until, stopOnFocus }) {
     if (!this.settings.repeatReminder || this.disposed) return
+    if (stopOnFocus && this.isSessionFocused(sessionId)) {
+      // A finished turn the user is already watching needs no reminder at all.
+      this.log(`stop repeat kind=${payload.kind} reason=session-focused`)
+      return
+    }
     const key = `${payload.kind}|${sessionId ?? ''}|${payload.title}`
     this.clearRepeat(key)
     const intervalMs = this.settings.repeatIntervalMinutes * 60_000
     const maxTicks = Math.max(REPEAT_LIMIT, Math.ceil(HOLD_WINDOW_MS / intervalMs))
-    const entry = { payload, sessionId, sent: 0, ticks: 0, heldLogged: false, timer: null }
+    const entry = {
+      payload,
+      sessionId,
+      stopOnFocus: stopOnFocus === true,
+      sent: 0,
+      ticks: 0,
+      heldLogged: false,
+      timer: null,
+    }
     entry.timer = setInterval(() => {
       if (this.disposed) {
         this.clearRepeat(key)
@@ -614,6 +630,12 @@ class WindowsNotifier {
         return
       }
       if (this.isSessionFocused(sessionId)) {
+        if (entry.stopOnFocus) {
+          // Seeing the finished turn once retires its reminder for good.
+          this.log(`stop repeat kind=${payload.kind} reason=session-focused`)
+          this.clearRepeat(key)
+          return
+        }
         if (!entry.heldLogged) {
           entry.heldLogged = true
           this.log(`hold repeat kind=${payload.kind} reason=session-focused`)
@@ -670,6 +692,21 @@ class WindowsNotifier {
     this.pruneActive()
     const after = this.isSessionFocused(sessionId)
     if (before !== after) this.log(`session focus ${sessionId} ${after ? 'gained' : 'lost'}`)
+    if (!before && after) this.stopCompletedRepeats(sessionId)
+  }
+
+  /**
+   * Retire finished-turn reminders as soon as the session is seen.
+   * Approvals and questions keep their hold/resume behavior.
+   * @param {string} sessionId session that gained focus.
+   */
+  stopCompletedRepeats(sessionId) {
+    if (!sessionId) return
+    for (const [key, entry] of this.repeatTimers) {
+      if (entry.sessionId !== sessionId || !entry.stopOnFocus) continue
+      this.log(`stop repeat kind=${entry.payload.kind} reason=session-focused`)
+      this.clearRepeat(key)
+    }
   }
 
   /**
