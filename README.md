@@ -40,6 +40,8 @@ It is for people who start long-running sessions and then look away: the notific
 - **Changes apply immediately** — toggling a switch writes the value into the profile configuration and reloads the plugin; no DSH restart.
 - **Native Windows surface** — real toasts in the notification center, attributed to DeepSeek Harness, with sound control.
 - **Click to wake** — clicking a toast opens `dsh://open`, so the DSH window comes forward instead of staying behind other apps.
+- **Update alerts** — checks npm at startup and raises one notification when a newer version exists; a switch on the plugin page turns it off.
+- **Repeat reminders** — approvals, questions and finished turns remind you again on a configurable interval until you act, with a bounded repeat count.
 - **Quiet about delegation** — only root sessions notify; turns of delegated subagents never interrupt you.
 - **Turn-aware content** — completion notices carry the session title and the start of the answer; failures carry the error message.
 - **Three delivery channels** — a WinRT toast through Windows PowerShell, an Electron notification when the Host exposes it, and a tray balloon as the last resort.
@@ -125,6 +127,9 @@ The four switches map to the first four keys; every key can also be set by hand:
 | `skipWhenFocused` | `false` | Stay quiet while the DSH window is focused; only works when the Host exposes Electron windows |
 | `silent` | `false` | Do not play the notification sound |
 | `openOnClick` | `true` | Clicking a toast opens `dsh://open` to bring the DSH window forward |
+| `updateCheck` | `true` | Check npm at startup and notify when a newer version exists |
+| `repeatReminder` | `true` | Repeat approval, question and finished-turn reminders |
+| `repeatIntervalMinutes` | `5` | Minutes between repeats (1–240) |
 | `fallback` | `true` | Try the remaining channels when the preferred one fails |
 | `transport` | `auto` | `auto` / `electron` / `toast` / `balloon` |
 | `locale` | `auto` | `auto` / `zh` / `en` notification language |
@@ -205,6 +210,8 @@ The plugin has a Host half and a browser half:
 - `skipWhenFocused` has no effect when the Host exposes no Electron window, which is the case on DSH Desktop today.
 - The tray-balloon fallback is attributed by the OS; when the explicit app identity is refused, the source still reads Windows PowerShell.
 - The plugin does not aggregate sessions across multiple Hosts or devices.
+- Update alerts need access to the npm registry; a failed check is written to the diagnostics log and never shown as a notification.
+- A repeated reminder stops when the approval or question settles, when the session sees new activity, or after six repeats.
 - The internal HTTP route may change between minor releases.
 
 ## Development

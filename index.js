@@ -32,7 +32,17 @@ const POWERSHELL = process.env.SystemRoot
   : 'powershell.exe'
 const TRANSPORTS = ['auto', 'electron', 'toast', 'balloon']
 const SETTINGS_ROUTE = '/windows-notifications/api'
-const FLAG_KEYS = ['turnEnd', 'approval', 'question', 'signIn']
+const FLAG_KEYS = ['turnEnd', 'approval', 'question', 'signIn', 'updateCheck', 'repeatReminder']
+const PACKAGE_NAME = 'dsh-windows-notifications'
+const REGISTRY_URL = `https://registry.npmjs.org/${PACKAGE_NAME}`
+const REPEAT_LIMIT = 6
+const PACKAGE_VERSION = (() => {
+  try {
+    return String(createRequire(import.meta.url)('./package.json').version || '0.0.0')
+  } catch {
+    return '0.0.0'
+  }
+})()
 
 const TEXTS = {
   en: {
@@ -43,6 +53,8 @@ const TEXTS = {
     question: 'Waiting for your answer',
     signIn: 'Sign-in required',
     signInBody: 'DeepSeek Harness needs you to sign in to your account.',
+    updateTitle: 'Plugin update available',
+    updateBody: (latest, current) => `Version ${latest} is available (current ${current}). Reinstall the plugin to update.`,
   },
   zh: {
     turnComplete: '任务完成',
@@ -52,6 +64,8 @@ const TEXTS = {
     question: '等待你的回答',
     signIn: '需要登录',
     signInBody: 'DeepSeek Harness 需要你登录账号后继续。',
+    updateTitle: '插件有更新',
+    updateBody: (latest, current) => `新版本 ${latest} 可用（当前 ${current}），重新安装插件即可升级。`,
   },
 }
 
@@ -103,13 +117,15 @@ export function apply(ctx, config) {
   // request in their own listener. Registering first (prepend) keeps this
   // observer outside that claim, so it sees the request and then delegates.
   ctx.on('approval/request', (request, next) => {
-    observe('approval', () => notifier.onApproval(request))
-    return next()
+    const settled = next()
+    observe('approval', () => notifier.onApproval(request, settled))
+    return settled
   }, { prepend: true, global: true })
 
   ctx.on('user-questions/request', (request, next) => {
-    observe('question', () => notifier.onQuestion(request))
-    return next()
+    const settled = next()
+    observe('question', () => notifier.onQuestion(request, settled))
+    return settled
   }, { prepend: true, global: true })
 
   ctx.on('deepseek-account/model-sign-in-required', () => {
@@ -259,6 +275,10 @@ async function handleSettingsRequest(services, ownerCtx, notifier, req, res) {
   for (const key of FLAG_KEYS) {
     if (typeof body[key] === 'boolean') next[key] = body[key]
   }
+  const minutes = Number(body.repeatIntervalMinutes)
+  if (Number.isFinite(minutes)) {
+    next.repeatIntervalMinutes = Math.min(240, Math.max(1, Math.round(minutes)))
+  }
   if (Object.keys(next).length === 0) {
     sendJson(res, 400, { ok: false, error: 'nothing-to-save' })
     return
@@ -338,6 +358,8 @@ class WindowsNotifier {
     this.supported = process.platform === 'win32'
     this.pending = 0
     this.chain = Promise.resolve()
+    this.repeatTimers = new Map()
+    this.version = PACKAGE_VERSION
 
     // Align the process identity with the installed Start-menu shortcut so a
     // Windows toast is attributed to DSH instead of an unknown sender.
@@ -352,7 +374,35 @@ class WindowsNotifier {
 
     rotateLog(this.logFile)
     this.log(`start electron=${Boolean(this.electron)} locale=${this.locale} transport=${this.settings.transport} appId=${clean(this.settings.appUserModelId)}`)
+    this.log(`features updateCheck=${this.settings.updateCheck} repeatReminder=${this.settings.repeatReminder} interval=${this.settings.repeatIntervalMinutes}m`)
     if (!this.supported) this.log(`unsupported platform=${process.platform}`)
+    if (this.settings.updateCheck) void this.checkForUpdate()
+  }
+
+  /**
+   * Ask the npm registry whether a newer version exists and notify once per
+   * startup. Failures stay in the diagnostics log; they never disturb the user.
+   */
+  async checkForUpdate() {
+    if (this.disposed) return
+    try {
+      const response = await fetch(REGISTRY_URL, {
+        headers: { accept: 'application/json' },
+        signal: AbortSignal.timeout(6000),
+      })
+      if (!response.ok) throw new Error(`http ${response.status}`)
+      const data = await response.json()
+      const latest = String(data?.['dist-tags']?.latest ?? '')
+      if (!latest) throw new Error('no latest tag')
+      if (compareVersions(latest, this.version) <= 0) {
+        this.log(`update check current=${this.version} latest=${latest} up-to-date`)
+        return
+      }
+      this.log(`update available current=${this.version} latest=${latest}`)
+      this.emit({ kind: 'update', title: this.text.updateTitle, body: this.text.updateBody(latest, this.version) })
+    } catch (error) {
+      this.log(`update check failed ${clean(describeError(error))}`)
+    }
   }
 
   /**
@@ -401,11 +451,19 @@ class WindowsNotifier {
       approval: settings.approval,
       question: settings.question,
       signIn: settings.signIn,
+      updateCheck: settings.updateCheck,
+      repeatReminder: settings.repeatReminder,
+      repeatIntervalMinutes: settings.repeatIntervalMinutes,
     }
   }
 
   onSessionEvent(session, event) {
     if (this.disposed) return
+    if (event && (event.type === 'turn/start' || event.type === 'user/message')) {
+      // Any fresh activity in the session ends its pending reminders.
+      this.clearSessionRepeats(session?.id)
+      return
+    }
     if (!event || event.type !== 'turn/end') return
     if (!this.settings.turnEnd) {
       this.log('skip kind=turn:end reason=disabled')
@@ -443,10 +501,12 @@ class WindowsNotifier {
     }
     if (detail) body = joinLines(body, detail)
 
-    this.emit({ kind: `turn:${kind}`, title, body })
+    const payload = { kind: `turn:${kind}`, title, body, sessionId: session?.id }
+    if (kind === 'completed') this.emit(payload, { repeat: { sessionId: session?.id } })
+    else this.emit(payload)
   }
 
-  onApproval(request) {
+  onApproval(request, settled) {
     this.log(`approval event tool=${clean(request?.toolName) || 'unknown'}`)
     if (this.disposed) return
     if (!this.settings.approval) {
@@ -461,10 +521,11 @@ class WindowsNotifier {
       kind: 'approval',
       title: this.text.approval,
       body: joinLines(this.sessionLabel(session), truncate(detail, 160)),
-    })
+      sessionId: session?.id,
+    }, { repeat: { sessionId: session?.id, until: settled } })
   }
 
-  onQuestion(request) {
+  onQuestion(request, settled) {
     this.log('question event')
     if (this.disposed) return
     if (!this.settings.question) {
@@ -473,13 +534,15 @@ class WindowsNotifier {
     }
     const questions = Array.isArray(request?.questions) ? request.questions : []
     const first = questions[0]
+    const session = this.sessionOf(request?.agent)
     const detail = pickLocalized(first?.intent?.display?.question, this.locale)
       || clean(first?.question)
     this.emit({
       kind: 'question',
       title: this.text.question,
-      body: joinLines(this.sessionLabel(this.sessionOf(request?.agent)), truncate(detail, 160)),
-    })
+      body: joinLines(this.sessionLabel(session), truncate(detail, 160)),
+      sessionId: session?.id,
+    }, { repeat: { sessionId: session?.id, until: settled } })
   }
 
   onSignIn() {
@@ -491,10 +554,51 @@ class WindowsNotifier {
     this.emit({ kind: 'signin', title: this.text.signIn, body: this.text.signInBody })
   }
 
-  emit(payload) {
+  emit(payload, options = {}) {
     void this.send(payload).catch((error) => {
       this.log(`skip kind=${payload?.kind ?? 'notice'} reason=error ${clean(describeError(error))}`)
     })
+    if (options.repeat) this.scheduleRepeat(payload, options.repeat)
+  }
+
+  /**
+   * Re-send one reminder every configured interval while the condition lasts.
+   * Approvals and questions stop when they settle; a finished turn stops on the
+   * next activity in that session. The repeat count is bounded.
+   * @param {{ title: string, body: string, kind: string }} payload notice.
+   * @param {{ sessionId?: string, until?: Promise<unknown> }} repeat repeat facts.
+   */
+  scheduleRepeat(payload, { sessionId, until }) {
+    if (!this.settings.repeatReminder || this.disposed) return
+    const key = `${payload.kind}|${sessionId ?? ''}|${payload.title}`
+    this.clearRepeat(key)
+    let sent = 0
+    const timer = setInterval(() => {
+      if (this.disposed || sent >= REPEAT_LIMIT) {
+        this.clearRepeat(key)
+        return
+      }
+      sent += 1
+      this.log(`repeat kind=${payload.kind} count=${sent}`)
+      void this.send({ ...payload }).catch(() => {})
+    }, this.settings.repeatIntervalMinutes * 60_000)
+    timer.unref?.()
+    this.repeatTimers.set(key, { timer, sessionId })
+    if (until) Promise.resolve(until).finally(() => this.clearRepeat(key)).catch(() => {})
+  }
+
+  clearRepeat(key) {
+    const entry = this.repeatTimers.get(key)
+    if (!entry) return
+    clearInterval(entry.timer)
+    this.repeatTimers.delete(key)
+  }
+
+  clearSessionRepeats(sessionId) {
+    if (!sessionId) return
+    for (const [key, entry] of this.repeatTimers) {
+      if (entry.sessionId === sessionId) this.clearRepeat(key)
+    }
   }
 
   async send(payload) {
@@ -717,6 +821,8 @@ class WindowsNotifier {
   dispose() {
     if (this.disposed) return
     this.disposed = true
+    for (const entry of this.repeatTimers.values()) clearInterval(entry.timer)
+    this.repeatTimers.clear()
     for (const notification of this.retained) {
       try { notification.close?.() } catch { /* already gone */ }
     }
@@ -755,6 +861,9 @@ function resolveSettings(raw) {
     appUserModelId,
     balloonAppUserModelId: flag('balloonAppUserModelId', true),
     openOnClick: flag('openOnClick', true),
+    updateCheck: flag('updateCheck', true),
+    repeatReminder: flag('repeatReminder', true),
+    repeatIntervalMinutes: count('repeatIntervalMinutes', 5, 1, 240),
   }
 }
 
@@ -1106,4 +1215,20 @@ function describeError(error) {
   } catch {
     return String(error)
   }
+}
+
+/**
+ * Compare two dotted semantic versions numerically.
+ * @param {string} a left version.
+ * @param {string} b right version.
+ * @returns {number} 1 when a is newer, -1 when b is newer, 0 when equal.
+ */
+function compareVersions(a, b) {
+  const left = String(a).split('.').map(part => Number.parseInt(part, 10) || 0)
+  const right = String(b).split('.').map(part => Number.parseInt(part, 10) || 0)
+  for (let index = 0; index < 3; index += 1) {
+    const diff = (left[index] ?? 0) - (right[index] ?? 0)
+    if (diff !== 0) return diff > 0 ? 1 : -1
+  }
+  return 0
 }

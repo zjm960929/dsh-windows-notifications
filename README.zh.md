@@ -40,6 +40,8 @@
 - **保存即生效** —— 切换开关会写入 profile 配置并重载插件，不需要重启 DSH。
 - **原生 Windows 通知** —— 真正进入通知中心的 Toast，来源显示为 DeepSeek Harness，可静音。
 - **点击唤起** —— 点击通知会打开 `dsh://open`，把 DSH 窗口带到前台，而不是留在其他应用后面。
+- **更新提示** —— 启动时检查 npm 上的新版本，有更新时发一条通知；插件页有开关可关闭。
+- **重复提醒** —— 等待授权、等待回答或任务完成时，按可配置的间隔重复提醒，直到你处理，重复次数有上限。
 - **不打扰子代理** —— 只对根会话发通知，子代理的每一轮结束不会弹窗。
 - **内容带上下文** —— 完成通知带会话标题和回答开头；出错通知带错误信息。
 - **三条投递通道** —— Windows PowerShell 的 WinRT Toast、Host 可用时的 Electron 通知、以及最后的托盘气泡兜底。
@@ -125,6 +127,9 @@ dsh plugin --profile desktop add ./dsh-windows-notifications-<version>.tgz
 | `skipWhenFocused` | `false` | DSH 窗口在前台时不提醒；仅 Host 能读到 Electron 窗口时生效 |
 | `silent` | `false` | 静音 |
 | `openOnClick` | `true` | 点击通知打开 `dsh://open`，把 DSH 窗口带到前台 |
+| `updateCheck` | `true` | 启动时检查 npm 上的新版本并提醒 |
+| `repeatReminder` | `true` | 对等待授权、等待回答和任务完成重复提醒 |
+| `repeatIntervalMinutes` | `5` | 重复提醒的间隔分钟数（1–240） |
 | `fallback` | `true` | 首选通道失败时尝试其余通道 |
 | `transport` | `auto` | `auto` / `electron` / `toast` / `balloon` |
 | `locale` | `auto` | `auto` / `zh` / `en` 通知文案语言 |
@@ -205,6 +210,8 @@ Host 注册了 `windows_notification` 工具，模型可以主动发一条自动
 - Host 暴露不出 Electron 窗口时，`skipWhenFocused` 不生效（目前的桌面版就是这种情况）。
 - 托盘气泡的来源由系统归属；显式应用标识被拒绝时，来源仍显示 Windows PowerShell。
 - 插件不汇总多台 Host 或多设备上的会话。
+- 更新提示需要访问 npm registry；检查失败只写入诊断日志，不会弹通知打扰。
+- 重复提醒会在授权/提问结束、会话出现新活动，或重复 6 次后停止。
 - 内部 HTTP 路由可能随小版本调整。
 
 ## 开发

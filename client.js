@@ -27,6 +27,14 @@ window.__ModuleLoader__.load({
       questionHint: '有提问等待你回答时提醒。',
       signIn: '需要登录',
       signInHint: '账号需要重新登录时提醒。',
+      updateCheck: '更新提示',
+      updateCheckHint: '启动时检查 npm 上的新版本并提醒。',
+      repeatReminder: '重复提醒',
+      repeatReminderHint: '等待授权、等待回答或任务完成时，按间隔重复提醒。',
+      interval: '提醒间隔',
+      intervalHint: '分钟数，1–240。',
+      minutes: '分钟',
+      save: '保存',
       on: '开',
       off: '关',
       loading: '正在读取设置…',
@@ -46,6 +54,14 @@ window.__ModuleLoader__.load({
       questionHint: 'A question waits for your answer.',
       signIn: 'Sign-in required',
       signInHint: 'The account needs you to sign in again.',
+      updateCheck: 'Update alerts',
+      updateCheckHint: 'Check npm for a newer version at startup and notify you.',
+      repeatReminder: 'Repeat reminders',
+      repeatReminderHint: 'Remind you at the interval while an approval, a question, or a finished task waits.',
+      interval: 'Reminder interval',
+      intervalHint: 'Minutes, 1–240.',
+      minutes: 'min',
+      save: 'Save',
       on: 'On',
       off: 'Off',
       loading: 'Loading settings…',
@@ -70,6 +86,12 @@ window.__ModuleLoader__.load({
 .dwn-switch[aria-checked="true"] .dwn-thumb{transform:translateX(16px)}
 .dwn-error{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--dsw-alias-state-error-primary)}
 .dwn-retry{padding:2px 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;cursor:pointer}
+.dwn-sep{height:1px;background:var(--dsw-alias-border-l1)}
+.dwn-intervalBox{display:flex;align-items:center;gap:6px}
+.dwn-number{width:64px;height:28px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px}
+.dwn-saveBtn{height:28px;padding:0 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;cursor:pointer}
+.dwn-saveBtn:disabled{opacity:.5;cursor:default}
+.dwn-unit{font-size:12px;color:var(--dsw-alias-label-tertiary)}
 `
 
     function createCard(t) {
@@ -77,6 +99,7 @@ window.__ModuleLoader__.load({
         const [config, setConfig] = React.useState(null)
         const [error, setError] = React.useState('')
         const [saving, setSaving] = React.useState('')
+        const [minutes, setMinutes] = React.useState('')
 
         const load = React.useCallback(() => {
           setError('')
@@ -91,14 +114,17 @@ window.__ModuleLoader__.load({
 
         React.useEffect(() => { load() }, [])
 
+        React.useEffect(() => {
+          if (config) setMinutes(String(config.repeatIntervalMinutes ?? 5))
+        }, [config])
+
         // The slot also asks for a one-line summary; the switches belong to the
         // page view only.
         if (props.view === 'summary') return null
 
-        const toggle = (key) => {
-          if (!config || saving) return
+        const save = (next, key) => {
+          if (!config) return
           const previous = config
-          const next = { ...config, [key]: !config[key] }
           setConfig(next)
           setSaving(key)
           setError('')
@@ -119,7 +145,12 @@ window.__ModuleLoader__.load({
             .finally(() => setSaving(''))
         }
 
-        const rows = FLAGS.map((key) => {
+        const toggle = (key) => {
+          if (!config || saving) return
+          save({ ...config, [key]: !config[key] }, key)
+        }
+
+        const renderRow = (key) => {
           const checked = Boolean(config && config[key])
           return h('div', { className: 'dwn-row', key },
             h('div', { className: 'dwn-text' },
@@ -136,7 +167,62 @@ window.__ModuleLoader__.load({
               onClick: () => toggle(key),
             }, h('span', { className: 'dwn-thumb' })),
           )
-        })
+        }
+
+        const typeRows = FLAGS.map(renderRow)
+        const optionRows = ['updateCheck', 'repeatReminder'].map(renderRow)
+        const parsedMinutes = Number(minutes)
+        const minutesValid = Number.isFinite(parsedMinutes) && parsedMinutes >= 1 && parsedMinutes <= 240
+        const minutesDirty = Boolean(config) && minutesValid
+          && Math.round(parsedMinutes) !== config.repeatIntervalMinutes
+
+        // The interval is an explicit save: typing does not write the config.
+        const commitMinutes = () => {
+          if (!config) return
+          if (!minutesValid) {
+            setMinutes(String(config.repeatIntervalMinutes ?? 5))
+            return
+          }
+          const rounded = Math.min(240, Math.max(1, Math.round(parsedMinutes)))
+          setMinutes(String(rounded))
+          if (rounded !== config.repeatIntervalMinutes) {
+            save({ ...config, repeatIntervalMinutes: rounded }, 'repeatIntervalMinutes')
+          }
+        }
+
+        const intervalRow = config && config.repeatReminder
+          ? h('div', { className: 'dwn-row', key: 'interval' },
+              h('div', { className: 'dwn-text' },
+                h('span', { className: 'dwn-label' }, t('interval')),
+                h('span', { className: 'dwn-desc' }, t('intervalHint')),
+              ),
+              h('div', { className: 'dwn-intervalBox' },
+                h('input', {
+                  type: 'number',
+                  className: 'dwn-number',
+                  min: 1,
+                  max: 240,
+                  step: 1,
+                  value: minutes,
+                  'aria-label': t('interval'),
+                  onChange: event => setMinutes(event.target.value),
+                  onKeyDown: (event) => {
+                    if (event.key === 'Enter') {
+                      event.preventDefault()
+                      commitMinutes()
+                    }
+                  },
+                }),
+                h('span', { className: 'dwn-unit' }, t('minutes')),
+                h('button', {
+                  type: 'button',
+                  className: 'dwn-saveBtn',
+                  disabled: !minutesDirty || saving === 'repeatIntervalMinutes',
+                  onClick: commitMinutes,
+                }, t('save')),
+              ),
+            )
+          : null
 
         return h('section', { className: 'dwn-card' },
           h('style', null, styles),
@@ -144,7 +230,14 @@ window.__ModuleLoader__.load({
             h('span', { className: 'dwn-title' }, t('title')),
             h('span', { className: 'dwn-hint' }, t('hint')),
           ),
-          config ? rows : h('span', { className: 'dwn-hint' }, t('loading')),
+          config
+            ? h(React.Fragment, null,
+                typeRows,
+                h('div', { className: 'dwn-sep', key: 'sep' }),
+                optionRows,
+                intervalRow,
+              )
+            : h('span', { className: 'dwn-hint' }, t('loading')),
           error
             ? h('div', { className: 'dwn-error' },
                 h('span', null, error),
