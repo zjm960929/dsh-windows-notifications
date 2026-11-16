@@ -1,7 +1,7 @@
 name: publish
 
-# 只有推送 v* 形式的标签时才运行（例如 v1.0.0）。
-# 拉取请求和普通提交都不会触发发布。
+# Only runs when a v* tag is pushed (for example v1.0.0).
+# Pull requests and regular commits never trigger a release.
 on:
   push:
     tags:
@@ -9,7 +9,7 @@ on:
 
 permissions:
   contents: read
-  id-token: write # 生成 npm provenance（来源证明）所需
+  id-token: write # Required to generate npm provenance
 
 jobs:
   publish:
@@ -23,20 +23,22 @@ jobs:
           registry-url: https://registry.npmjs.org
 
       - name: Check tag matches package.json version
-        # 防止把 v1.0.1 的标签打到 1.0.0 的代码上
+        # Prevent tagging v1.0.1 on top of 1.0.0 code.
         run: |
           PKG="$(node -p "require('./package.json').version")"
           TAG="${GITHUB_REF_NAME#v}"
           if [ "$PKG" != "$TAG" ]; then
-            echo "标签 $TAG 与 package.json 里的版本 $PKG 不一致" >&2
+            echo "Tag $TAG does not match the package.json version $PKG" >&2
             exit 1
           fi
 
       - name: Syntax check
-        run: node --check index.js
+        run: |
+          node --check index.js
+          node --check client.js
 
       - name: Publish to npm
-        # 用仓库 Secrets 里的 NPM_TOKEN 登录 npm 并发布
+        # Log in to npm with the NPM_TOKEN repository secret and publish.
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
