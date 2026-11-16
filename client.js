@@ -116,7 +116,7 @@ window.__ModuleLoader__.load({
 
         React.useEffect(() => {
           if (config) setMinutes(String(config.repeatIntervalMinutes ?? 5))
-        }, [config])
+        }, [config && config.repeatIntervalMinutes])
 
         // The slot also asks for a one-line summary; the switches belong to the
         // page view only.
@@ -163,7 +163,7 @@ window.__ModuleLoader__.load({
               className: 'dwn-switch',
               'aria-checked': checked,
               'aria-label': `${t(key)}: ${checked ? t('on') : t('off')}`,
-              disabled: !config || saving === key,
+              disabled: !config || Boolean(saving) || saving === key,
               onClick: () => toggle(key),
             }, h('span', { className: 'dwn-thumb' })),
           )
@@ -217,7 +217,7 @@ window.__ModuleLoader__.load({
                 h('button', {
                   type: 'button',
                   className: 'dwn-saveBtn',
-                  disabled: !minutesDirty || saving === 'repeatIntervalMinutes',
+                  disabled: !minutesDirty || Boolean(saving),
                   onClick: commitMinutes,
                 }, t('save')),
               ),

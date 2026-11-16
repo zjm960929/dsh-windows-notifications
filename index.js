@@ -275,8 +275,8 @@ async function handleSettingsRequest(services, ownerCtx, notifier, req, res) {
   for (const key of FLAG_KEYS) {
     if (typeof body[key] === 'boolean') next[key] = body[key]
   }
-  const minutes = Number(body.repeatIntervalMinutes)
-  if (Number.isFinite(minutes)) {
+  const minutes = body.repeatIntervalMinutes
+  if (typeof minutes === 'number' && Number.isFinite(minutes)) {
     next.repeatIntervalMinutes = Math.min(240, Math.max(1, Math.round(minutes)))
   }
   if (Object.keys(next).length === 0) {
@@ -360,6 +360,7 @@ class WindowsNotifier {
     this.chain = Promise.resolve()
     this.repeatTimers = new Map()
     this.version = PACKAGE_VERSION
+    this.lastUpdateNotice = ''
 
     // Align the process identity with the installed Start-menu shortcut so a
     // Windows toast is attributed to DSH instead of an unknown sender.
@@ -398,6 +399,11 @@ class WindowsNotifier {
         this.log(`update check current=${this.version} latest=${latest} up-to-date`)
         return
       }
+      if (this.lastUpdateNotice === latest) {
+        this.log(`update notice already shown latest=${latest}`)
+        return
+      }
+      this.lastUpdateNotice = latest
       this.log(`update available current=${this.version} latest=${latest}`)
       this.emit({ kind: 'update', title: this.text.updateTitle, body: this.text.updateBody(latest, this.version) })
     } catch (error) {
@@ -574,13 +580,14 @@ class WindowsNotifier {
     this.clearRepeat(key)
     let sent = 0
     const timer = setInterval(() => {
-      if (this.disposed || sent >= REPEAT_LIMIT) {
+      if (this.disposed) {
         this.clearRepeat(key)
         return
       }
       sent += 1
       this.log(`repeat kind=${payload.kind} count=${sent}`)
       void this.send({ ...payload }).catch(() => {})
+      if (sent >= REPEAT_LIMIT) this.clearRepeat(key)
     }, this.settings.repeatIntervalMinutes * 60_000)
     timer.unref?.()
     this.repeatTimers.set(key, { timer, sessionId })
