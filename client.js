@@ -32,7 +32,7 @@ window.__ModuleLoader__.load({
       repeatReminder: '重复提醒',
       repeatReminderHint: '等待授权、等待回答或任务完成时，按间隔重复提醒。',
       interval: '提醒间隔',
-      intervalHint: '分钟数，1–240。',
+      intervalHint: '拖动滑块设置提醒间隔。',
       minutes: '分钟',
       save: '保存',
       on: '开',
@@ -59,7 +59,7 @@ window.__ModuleLoader__.load({
       repeatReminder: 'Repeat reminders',
       repeatReminderHint: 'Remind you at the interval while an approval, a question, or a finished task waits.',
       interval: 'Reminder interval',
-      intervalHint: 'Minutes, 1–240.',
+      intervalHint: 'Drag the slider to set the reminder interval.',
       minutes: 'min',
       save: 'Save',
       on: 'On',
@@ -88,7 +88,7 @@ window.__ModuleLoader__.load({
 .dwn-retry{padding:2px 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:transparent;color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;cursor:pointer}
 .dwn-sep{height:1px;background:var(--dsw-alias-border-l1)}
 .dwn-intervalBox{display:flex;align-items:center;gap:6px}
-.dwn-number{width:64px;height:28px;padding:0 8px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px}
+.dwn-range{width:160px;accent-color:var(--dsw-alias-state-business-primary)}
 .dwn-saveBtn{height:28px;padding:0 10px;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;cursor:pointer}
 .dwn-saveBtn:disabled{opacity:.5;cursor:default}
 .dwn-unit{font-size:12px;color:var(--dsw-alias-label-tertiary)}
@@ -172,18 +172,18 @@ window.__ModuleLoader__.load({
         const typeRows = FLAGS.map(renderRow)
         const optionRows = ['updateCheck', 'repeatReminder'].map(renderRow)
         const parsedMinutes = Number(minutes)
-        const minutesValid = Number.isFinite(parsedMinutes) && parsedMinutes >= 1 && parsedMinutes <= 240
+        const minutesValid = Number.isFinite(parsedMinutes) && parsedMinutes >= 1 && parsedMinutes <= 60
         const minutesDirty = Boolean(config) && minutesValid
           && Math.round(parsedMinutes) !== config.repeatIntervalMinutes
 
-        // The interval is an explicit save: typing does not write the config.
+        // The interval is an explicit save: the slider does not write the config.
         const commitMinutes = () => {
           if (!config) return
           if (!minutesValid) {
             setMinutes(String(config.repeatIntervalMinutes ?? 5))
             return
           }
-          const rounded = Math.min(240, Math.max(1, Math.round(parsedMinutes)))
+          const rounded = Math.min(60, Math.max(1, Math.round(parsedMinutes)))
           setMinutes(String(rounded))
           if (rounded !== config.repeatIntervalMinutes) {
             save({ ...config, repeatIntervalMinutes: rounded }, 'repeatIntervalMinutes')
@@ -198,22 +198,16 @@ window.__ModuleLoader__.load({
               ),
               h('div', { className: 'dwn-intervalBox' },
                 h('input', {
-                  type: 'number',
-                  className: 'dwn-number',
+                  type: 'range',
+                  className: 'dwn-range',
                   min: 1,
-                  max: 240,
+                  max: 60,
                   step: 1,
                   value: minutes,
                   'aria-label': t('interval'),
                   onChange: event => setMinutes(event.target.value),
-                  onKeyDown: (event) => {
-                    if (event.key === 'Enter') {
-                      event.preventDefault()
-                      commitMinutes()
-                    }
-                  },
                 }),
-                h('span', { className: 'dwn-unit' }, t('minutes')),
+                h('span', { className: 'dwn-unit' }, `${minutes || '1'} ${t('minutes')}`),
                 h('button', {
                   type: 'button',
                   className: 'dwn-saveBtn',
@@ -262,6 +256,46 @@ window.__ModuleLoader__.load({
           locale: NS,
           order: 10,
         }, Card))
+
+        // Tell the Host which session the page shows and whether it has focus,
+        // so a focused session stops asking for reminders.
+        const uiWorkspace = ctx.get('uiWorkspace')
+        const sessions = ctx.get('sessions')
+        const currentSessionId = () => {
+          try {
+            const id = uiWorkspace?.mainReference?.sessionId
+              || uiWorkspace?.selection?.getSnapshot?.()?.sessionId
+              || sessions?.list?.getSnapshot?.()?.current
+            return typeof id === 'string' ? id : ''
+          } catch {
+            return ''
+          }
+        }
+        let lastSignature = ''
+        const reportActive = () => {
+          const sessionId = currentSessionId()
+          if (!sessionId) return
+          const focused = typeof document !== 'undefined' && document.hasFocus()
+          const signature = `${sessionId}|${focused ? 1 : 0}`
+          if (signature === lastSignature) return
+          lastSignature = signature
+          fetch(`${API}/active`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ sessionId, focused }),
+          }).catch(() => {})
+        }
+        const reportTimer = setInterval(reportActive, 3000)
+        window.addEventListener('focus', reportActive)
+        window.addEventListener('blur', reportActive)
+        document.addEventListener('visibilitychange', reportActive)
+        ctx.effect(() => () => {
+          clearInterval(reportTimer)
+          window.removeEventListener('focus', reportActive)
+          window.removeEventListener('blur', reportActive)
+          document.removeEventListener('visibilitychange', reportActive)
+        }, 'windows-notifications: active-session reporter')
+        reportActive()
       },
     }
   },

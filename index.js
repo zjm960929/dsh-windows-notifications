@@ -253,6 +253,20 @@ async function handleSettingsRequest(services, ownerCtx, notifier, req, res) {
   const path = url.pathname.startsWith(SETTINGS_ROUTE)
     ? url.pathname.slice(SETTINGS_ROUTE.length) || '/'
     : '/'
+  if (path === '/active') {
+    if (req.method !== 'POST') {
+      sendJson(res, 405, { ok: false, error: 'method-not-allowed' })
+      return
+    }
+    const active = await readJsonBody(req, 4096)
+    if (!active || typeof active.sessionId !== 'string' || !active.sessionId) {
+      sendJson(res, 400, { ok: false, error: 'bad-json' })
+      return
+    }
+    notifier.markActive(active.sessionId, active.focused === true)
+    sendJson(res, 200, { ok: true })
+    return
+  }
   if (path !== '/config') {
     sendJson(res, 404, { ok: false, error: 'not-found' })
     return
@@ -277,7 +291,7 @@ async function handleSettingsRequest(services, ownerCtx, notifier, req, res) {
   }
   const minutes = body.repeatIntervalMinutes
   if (typeof minutes === 'number' && Number.isFinite(minutes)) {
-    next.repeatIntervalMinutes = Math.min(240, Math.max(1, Math.round(minutes)))
+    next.repeatIntervalMinutes = Math.min(60, Math.max(1, Math.round(minutes)))
   }
   if (Object.keys(next).length === 0) {
     sendJson(res, 400, { ok: false, error: 'nothing-to-save' })
@@ -361,6 +375,8 @@ class WindowsNotifier {
     this.repeatTimers = new Map()
     this.version = PACKAGE_VERSION
     this.lastUpdateNotice = ''
+    this.activeSessionId = ''
+    this.activeFocused = false
 
     // Align the process identity with the installed Start-menu shortcut so a
     // Windows toast is attributed to DSH instead of an unknown sender.
@@ -576,6 +592,10 @@ class WindowsNotifier {
    */
   scheduleRepeat(payload, { sessionId, until }) {
     if (!this.settings.repeatReminder || this.disposed) return
+    if (this.activeFocused && sessionId && this.activeSessionId === sessionId) {
+      this.log(`skip repeat kind=${payload.kind} reason=session-focused`)
+      return
+    }
     const key = `${payload.kind}|${sessionId ?? ''}|${payload.title}`
     this.clearRepeat(key)
     let sent = 0
@@ -606,6 +626,22 @@ class WindowsNotifier {
     for (const [key, entry] of this.repeatTimers) {
       if (entry.sessionId === sessionId) this.clearRepeat(key)
     }
+  }
+
+  /**
+   * Record which session the browser is showing and whether its window has
+   * focus. A focused session needs no reminders: the user is looking at it.
+   * @param {string} sessionId active session id reported by the page.
+   * @param {boolean} focused whether the page currently has focus.
+   */
+  markActive(sessionId, focused) {
+    if (typeof sessionId !== 'string' || !sessionId) return
+    const nextFocused = focused === true
+    const changed = this.activeSessionId !== sessionId || this.activeFocused !== nextFocused
+    this.activeSessionId = sessionId
+    this.activeFocused = nextFocused
+    if (changed) this.log(`client active session=${sessionId} focused=${nextFocused}`)
+    if (nextFocused) this.clearSessionRepeats(sessionId)
   }
 
   async send(payload) {
@@ -870,7 +906,7 @@ function resolveSettings(raw) {
     openOnClick: flag('openOnClick', true),
     updateCheck: flag('updateCheck', true),
     repeatReminder: flag('repeatReminder', true),
-    repeatIntervalMinutes: count('repeatIntervalMinutes', 5, 1, 240),
+    repeatIntervalMinutes: count('repeatIntervalMinutes', 5, 1, 60),
   }
 }
 
