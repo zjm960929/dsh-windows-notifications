@@ -683,13 +683,15 @@ class WindowsNotifier {
    */
   markActive(clientId, sessionId, focused) {
     if (typeof sessionId !== 'string' || !sessionId) return
+    const key = clientId || 'default'
+    const previous = this.activeReports.get(key)
+    const nextFocused = focused === true
     const before = this.isSessionFocused(sessionId)
-    this.activeReports.set(clientId || 'default', {
-      sessionId,
-      focused: focused === true,
-      at: Date.now(),
-    })
+    this.activeReports.set(key, { sessionId, focused: nextFocused, at: Date.now() })
     this.pruneActive()
+    if (!previous || previous.sessionId !== sessionId || previous.focused !== nextFocused) {
+      this.log(`client active session=${sessionId} focused=${nextFocused}`)
+    }
     const after = this.isSessionFocused(sessionId)
     if (before !== after) this.log(`session focus ${sessionId} ${after ? 'gained' : 'lost'}`)
     if (!before && after) this.stopCompletedRepeats(sessionId)

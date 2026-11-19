@@ -257,20 +257,11 @@ window.__ModuleLoader__.load({
           order: 10,
         }, Card))
 
-        // Tell the Host which session the page shows and whether it has focus,
-        // so a focused session stops asking for reminders.
-        const uiWorkspace = ctx.get('uiWorkspace')
-        const sessions = ctx.get('sessions')
-        const currentSessionId = () => {
-          try {
-            const id = uiWorkspace?.mainReference?.sessionId
-              || uiWorkspace?.selection?.getSnapshot?.()?.sessionId
-              || sessions?.list?.getSnapshot?.()?.current
-            return typeof id === 'string' ? id : ''
-          } catch {
-            return ''
-          }
-        }
+        // The session id comes from the session-scoped dock slot, which hands
+        // every entry the conversation it renders. The workspace services no
+        // longer expose a selection, so this is the stable source.
+        let activeSessionId = ''
+        const currentSessionId = () => activeSessionId
         const clientId = (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function')
           ? crypto.randomUUID()
           : `client-${Date.now()}-${Math.random().toString(16).slice(2)}`
@@ -311,6 +302,25 @@ window.__ModuleLoader__.load({
             keepalive: true,
           }).catch(() => {})
         }
+        const setActiveSession = (id) => {
+          const next = typeof id === 'string' ? id : ''
+          if (next === activeSessionId) return
+          activeSessionId = next
+          reportActive()
+        }
+        const SessionReporter = (props) => {
+          React.useEffect(() => {
+            setActiveSession(props.sessionId)
+            return () => setActiveSession('')
+          }, [props.sessionId])
+          return null
+        }
+        ctx.slots.inject('conversation.composer.dock', () => ctx.slots.register({
+          name: 'conversation.composer.dock',
+          id: 'dsh-windows-notifications-session',
+          order: 100,
+        }, SessionReporter))
+
         const reportTimer = setInterval(reportActive, 3000)
         window.addEventListener('focus', reportActive)
         window.addEventListener('blur', reportActive)
